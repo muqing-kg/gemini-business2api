@@ -102,6 +102,7 @@ class BaseTaskService(Generic[T]):
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._tasks: Dict[str, T] = {}
         self._current_task_id: Optional[str] = None
+        self._last_task_id: Optional[str] = None
         self._lock = asyncio.Lock()
         self._log_lock = threading.Lock()
         self._log_prefix = log_prefix
@@ -135,6 +136,8 @@ class BaseTaskService(Generic[T]):
             task = self._tasks.get(task_id)
             if task and task.status == TaskStatus.PENDING:
                 return task
+        if self._last_task_id:
+            return self._tasks.get(self._last_task_id)
         return None
 
     def get_pending_task_ids(self) -> List[str]:
@@ -160,6 +163,7 @@ class BaseTaskService(Generic[T]):
                 task.finished_at = time.time()
                 self._append_log(task, "warning", f"task cancelled while pending: {reason}")
                 self._save_task_history_best_effort(task)
+                self._last_task_id = task.id
                 return task
 
             if task.status == TaskStatus.RUNNING:
@@ -243,6 +247,7 @@ class BaseTaskService(Generic[T]):
             self._clear_cancel_hooks(task.id)
             if task.status in (TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED) and task.finished_at:
                 self._save_task_history_best_effort(task)
+                self._last_task_id = task.id
 
     def _add_cancel_hook(self, task_id: str, hook: Callable[[], None]) -> None:
         """注册取消回调（线程安全）。"""

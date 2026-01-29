@@ -11,6 +11,7 @@
 """
 
 import os
+import shutil
 import yaml
 import secrets
 from pathlib import Path
@@ -128,7 +129,7 @@ class AppConfig(BaseModel):
     # 安全配置（仅从环境变量）
     security: SecurityConfig
 
-    # 业务配置（环境变量 > YAML > 默认值）
+    # 业务配置（环境变量 > 数据库 > 默认值）
     basic: BasicConfig
     image_generation: ImageGenerationConfig
     video_generation: VideoGenerationConfig = Field(default_factory=VideoGenerationConfig)
@@ -145,10 +146,7 @@ class ConfigManager:
     def __init__(self, yaml_path: str = None):
         # 自动检测环境并设置默认路径
         if yaml_path is None:
-            if os.path.exists("/data"):
-                yaml_path = "/data/settings.yaml"  # HF Pro 持久化
-            else:
-                yaml_path = "data/settings.yaml"  # 本地存储
+            yaml_path = ""
         self.yaml_path = Path(yaml_path)
         self._config: Optional[AppConfig] = None
         self.load()
@@ -159,7 +157,7 @@ class ConfigManager:
 
         优先级规则：
         1. 安全配置（ADMIN_KEY, SESSION_SECRET_KEY）：仅从环境变量读取
-        2. 其他配置：YAML > 默认值
+        2. 其他配置：数据库 > 默认值
         """
         # 1. 加载 YAML 配置
         yaml_data = self._load_yaml()
@@ -170,7 +168,7 @@ class ConfigManager:
             session_secret_key=os.getenv("SESSION_SECRET_KEY", self._generate_secret())
         )
 
-        # 3. 加载基础配置（YAML > 默认值）
+        # 3. 加载基础配置（数据库 > 默认值）
         basic_data = yaml_data.get("basic", {})
         refresh_window_raw = basic_data.get("refresh_window_hours", 1)
         register_default_raw = basic_data.get("register_default_count", 1)
@@ -263,20 +261,19 @@ class ConfigManager:
         )
 
     def _load_yaml(self) -> dict:
-        """加载 YAML 文件"""
+        """??????????"""
         if storage.is_database_enabled():
             try:
-                data = storage.load_settings_sync()
-                if isinstance(data, dict):
-                    return data
+                has_settings = storage.has_settings_sync()
+                if has_settings:
+                    data = storage.load_settings_sync()
+                    if isinstance(data, dict):
+                        return data
+                return {}
             except Exception as e:
-                print(f"[WARN] 加载数据库设置失败: {e}，使用本地配置")
-        if self.yaml_path.exists():
-            try:
-                with open(self.yaml_path, 'r', encoding='utf-8') as f:
-                    return yaml.safe_load(f) or {}
-            except Exception as e:
-                print(f"[WARN] 加载配置文件失败: {e}，使用默认配置")
+                print(f"[WARN] ?????????: {e}")
+                return {}
+        print("[WARN] ????????????")
         return {}
 
     def _generate_secret(self) -> str:
@@ -284,17 +281,16 @@ class ConfigManager:
         return secrets.token_urlsafe(32)
 
     def save_yaml(self, data: dict):
-        """保存 YAML 配置"""
-        if storage.is_database_enabled():
-            try:
-                saved = storage.save_settings_sync(data)
-                if saved:
-                    return
-            except Exception as e:
-                print(f"[WARN] 保存数据库设置失败: {e}，降级到本地文件")
-        self.yaml_path.parent.mkdir(exist_ok=True)
-        with open(self.yaml_path, 'w', encoding='utf-8') as f:
-            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        """??????????"""
+        if not storage.is_database_enabled():
+            raise RuntimeError("Database is not enabled")
+        try:
+            saved = storage.save_settings_sync(data)
+            if saved:
+                return
+        except Exception as e:
+            print(f"[WARN] ?????????: {e}")
+        raise RuntimeError("Database write failed")
 
     def reload(self):
         """重新加载配置（热更新）"""

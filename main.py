@@ -1,4 +1,4 @@
-import json, time, os, asyncio, uuid, ssl, re, yaml, shutil, base64
+import json, time, os, asyncio, uuid, ssl, re, yaml, base64
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Union, Dict, Any
 from pathlib import Path
@@ -17,23 +17,13 @@ from collections import deque
 from threading import Lock
 
 # ---------- 数据目录配置 ----------
-# 自动检测环境：HF Spaces Pro 使用 /data，本地使用 ./data
-if os.path.exists("/data"):
-    DATA_DIR = "/data"  # HF Pro 持久化存储
-    logger_prefix = "[HF-PRO]"
-else:
-    DATA_DIR = "./data"  # 本地持久化存储
-    logger_prefix = "[LOCAL]"
+DATA_DIR = "./data"
+logger_prefix = "[LOCAL]"
 
 # 确保数据目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # 统一的数据文件路径
-ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.json")
-SETTINGS_FILE = os.path.join(DATA_DIR, "settings.yaml")
-STATS_FILE = os.path.join(DATA_DIR, "stats.json")
-TASK_HISTORY_FILE = os.path.join(DATA_DIR, "task_history.json")
-TASK_HISTORY_TMP_FILE = os.path.join(DATA_DIR, "task_history.json.tmp")
 TASK_HISTORY_MTIME: float = 0.0
 IMAGE_DIR = os.path.join(DATA_DIR, "images")
 VIDEO_DIR = os.path.join(DATA_DIR, "videos")
@@ -100,25 +90,18 @@ log_lock = Lock()
 stats_lock = asyncio.Lock()  # 改为异步锁
 
 async def load_stats():
-    """加载统计数据（异步）。"""
+    """加载统计数据（异步）。数据库不可用时使用内存默认值。"""
     data = None
     if storage.is_database_enabled():
         try:
-            data = await asyncio.to_thread(storage.load_stats_sync)
-            if not isinstance(data, dict):
-                data = None
+            has_stats = await asyncio.to_thread(storage.has_stats_sync)
+            if has_stats:
+                data = await asyncio.to_thread(storage.load_stats_sync)
+                if not isinstance(data, dict):
+                    data = None
         except Exception as e:
             logger.error(f"[STATS] 数据库加载失败: {str(e)[:50]}")
-    if data is None:
-        try:
-            if os.path.exists(STATS_FILE):
-                async with aiofiles.open(STATS_FILE, 'r', encoding='utf-8') as f:
-                    content = await f.read()
-                    data = json.loads(content)
-        except Exception:
-            pass
 
-    # 如果没有加载到数据，返回默认值
     if data is None:
         data = {
             "total_visitors": 0,
@@ -132,7 +115,6 @@ async def load_stats():
             "recent_conversations": []
         }
 
-    # 将列表转换为 deque（限制大小防止内存无限增长）
     if isinstance(data.get("request_timestamps"), list):
         data["request_timestamps"] = deque(data["request_timestamps"], maxlen=20000)
     if isinstance(data.get("failure_timestamps"), list):
@@ -143,8 +125,7 @@ async def load_stats():
     return data
 
 async def save_stats(stats):
-    """保存统计数据（异步，避免阻塞事件循环）"""
-    # 将 deque 转换为 list 以便 JSON 序列化
+    """保存统计数据（异步）。数据库不可用时不落盘。"""
     stats_to_save = stats.copy()
     if isinstance(stats_to_save.get("request_timestamps"), deque):
         stats_to_save["request_timestamps"] = list(stats_to_save["request_timestamps"])
@@ -160,11 +141,7 @@ async def save_stats(stats):
                 return
         except Exception as e:
             logger.error(f"[STATS] 数据库保存失败: {str(e)[:50]}")
-    try:
-        async with aiofiles.open(STATS_FILE, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(stats_to_save, ensure_ascii=False, indent=2))
-    except Exception as e:
-        logger.error(f"[STATS] 保存统计数据失败: {str(e)[:50]}")
+    return
 
 # 初始化统计数据（需要在启动时异步加载）
 global_stats = {
@@ -222,42 +199,33 @@ def _build_history_entry(task_type: str, task_data: dict, is_live: bool = False)
 
 
 def _persist_task_history() -> None:
-    """Persist task history to disk (best-effort)."""
+    """持久化任务历史到数据库（仅数据库模式）。"""
+    if not storage.is_database_enabled():
+        return
     try:
-        history = list(task_history)
-        with open(TASK_HISTORY_TMP_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        os.replace(TASK_HISTORY_TMP_FILE, TASK_HISTORY_FILE)
-        global TASK_HISTORY_MTIME
-        try:
-            TASK_HISTORY_MTIME = os.path.getmtime(TASK_HISTORY_FILE)
-        except Exception:
-            pass
+        if not task_history:
+            storage.clear_task_history_sync()
+            return
+        storage.save_task_history_entry_sync(task_history[-1])
     except Exception as exc:
-        logger.warning(f"[HISTORY] Persist failed: {exc}")
+        logger.warning(f"[HISTORY] Persist task history failed: {exc}")
 
 
 def _load_task_history() -> None:
-    """Load persisted task history into memory (best-effort)."""
-    if not os.path.exists(TASK_HISTORY_FILE):
+    """从数据库加载任务历史（仅数据库模式）。"""
+    if not storage.is_database_enabled():
         return
     try:
-        global TASK_HISTORY_MTIME
-        mtime = os.path.getmtime(TASK_HISTORY_FILE)
-        if mtime <= TASK_HISTORY_MTIME:
-            return
-        with open(TASK_HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, list):
+        history = storage.load_task_history_sync(limit=100)
+        if not isinstance(history, list):
             return
         with task_history_lock:
             task_history.clear()
-            for item in data[-task_history.maxlen:]:
-                if isinstance(item, dict):
-                    task_history.append(item)
-        TASK_HISTORY_MTIME = mtime
+            for entry in history:
+                if isinstance(entry, dict):
+                    task_history.append(entry)
     except Exception as exc:
-        logger.warning(f"[HISTORY] Load failed: {exc}")
+        logger.warning(f"[HISTORY] Load task history failed: {exc}")
 
 
 def build_recent_conversation_entry(
@@ -695,12 +663,8 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(VIDEO_DIR, exist_ok=True)
 app.mount("/images", StaticFiles(directory=IMAGE_DIR), name="images")
 app.mount("/videos", StaticFiles(directory=VIDEO_DIR), name="videos")
-if IMAGE_DIR == "/data/images":
-    logger.info(f"[SYSTEM] 图片静态服务已启用: /images/ -> {IMAGE_DIR} (HF Pro持久化)")
-    logger.info(f"[SYSTEM] 视频静态服务已启用: /videos/ -> {VIDEO_DIR} (HF Pro持久化)")
-else:
-    logger.info(f"[SYSTEM] 图片静态服务已启用: /images/ -> {IMAGE_DIR} (本地持久化)")
-    logger.info(f"[SYSTEM] 视频静态服务已启用: /videos/ -> {VIDEO_DIR} (本地持久化)")
+logger.info(f"[SYSTEM] 图片静态服务已启用: /images/ -> {IMAGE_DIR}")
+logger.info(f"[SYSTEM] 视频静态服务已启用: /videos/ -> {VIDEO_DIR}")
 
 # ---------- 后台任务启动 ----------
 
@@ -772,15 +736,6 @@ async def auto_refresh_accounts_task():
 async def startup_event():
     """应用启动时初始化后台任务"""
     global global_stats
-
-    # 文件迁移逻辑：将根目录的旧文件迁移到 data 目录
-    old_accounts = "accounts.json"
-    if os.path.exists(old_accounts) and not os.path.exists(ACCOUNTS_FILE):
-        try:
-            shutil.copy(old_accounts, ACCOUNTS_FILE)
-            logger.info(f"{logger_prefix} 已迁移 {old_accounts} -> {ACCOUNTS_FILE}")
-        except Exception as e:
-            logger.warning(f"{logger_prefix} 文件迁移失败: {e}")
 
     # 加载统计数据
     global_stats = await load_stats()
@@ -1195,7 +1150,11 @@ async def admin_get_accounts(request: Request):
             "quota_status": quota_status  # 新增配额状态
         })
 
-    return {"total": len(accounts_info), "accounts": accounts_info}
+    migration_notice = storage.pop_migration_notice()
+    payload = {"total": len(accounts_info), "accounts": accounts_info}
+    if migration_notice:
+        payload["migration_notice"] = {"message": migration_notice}
+    return payload
 
 @app.get("/admin/accounts-config")
 @require_login()
@@ -1770,11 +1729,6 @@ async def admin_clear_task_history(request: Request, confirm: str = None):
         cleared_count = len(task_history)
         task_history.clear()
         _persist_task_history()
-        try:
-            if os.path.exists(TASK_HISTORY_FILE):
-                os.remove(TASK_HISTORY_FILE)
-        except Exception as exc:
-            logger.warning(f"[HISTORY] 删除历史文件失败: {exc}")
     logger.info("[HISTORY] 任务历史已清空")
     return {"status": "success", "message": "已清空任务历史", "cleared_count": cleared_count}
 
