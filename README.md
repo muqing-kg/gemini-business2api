@@ -38,7 +38,7 @@
 
 - ✅ OpenAI API 完全兼容 - 无缝对接现有工具
 - ✅ 多账号负载均衡 - 轮询与故障自动切换
-- ✅ 自动化账号管理 - 支持自动注册与登录，集成 DuckMail 和 Microsoft 邮箱，支持无头浏览器模式
+- ✅ 自动化账号管理 - 支持自动注册与登录，集成 DuckMail / Moemail / Freemail / GPTMail / Microsoft 邮箱，支持无头浏览器模式
 - ✅ 流式输出 - 实时响应
 - ✅ 多模态输入 - 100+ 文件类型（图片、PDF、Office 文档、音频、视频、代码等）
 - ✅ 图片生成 & 图生图 - 模型可配置，Base64 或 URL 返回
@@ -232,17 +232,24 @@ cd gemini-business2api
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 设置 ADMIN_KEY
+# 编辑 .env 至少设置：
+# - ADMIN_KEY
+# - POSTGRES_PASSWORD（若使用内置 PostgreSQL）
 
 # 3. 启动服务
-docker-compose up -d
+docker compose up -d
 
 # 4. 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 5. 更新到最新版本
-docker-compose pull && docker-compose up -d
+docker compose pull && docker compose up -d
 ```
+
+默认编排说明（`docker-compose.yml`）：
+- `gemini-api`：默认拉取 `ghcr.io/muqing-kg/gemini-business2api:latest`
+- `postgres`：内置 PostgreSQL 16（数据持久化到 `./data/postgres`）
+- 若你使用外部 PostgreSQL：直接在 `.env` 设置 `DATABASE_URL`，可忽略内置库
 
 
 ### 数据库持久化（可选）（强烈推荐）
@@ -274,6 +281,23 @@ docker-compose pull && docker-compose up -d
 
 - 账号配置优先读取 `ACCOUNTS_CONFIG`，也可在管理面板中录入并保存至 `data/accounts.json`。
 - 如需鉴权，可在管理面板设置中配置 `API_KEY` 保护 `/v1/chat/completions`。
+
+### Freemail（`muqing-kg/freemail`）对接
+
+在管理面板的「系统设置 -> 临时邮箱服务」中选择 `freemail`，并配置：
+
+- `Freemail API`：
+  - 本地调试：`http://127.0.0.1:8787`（`wrangler dev` 默认地址）
+  - 云端部署：填写你 freemail 的公网地址（例如 `https://mail.example.com`）
+- `Freemail JWT_TOKEN / admin_token`：`freemail` 项目 `wrangler.toml` 里的 `JWT_TOKEN`
+- `Freemail 域名`：可选，填写后会自动映射到 `freemail` 的 `domainIndex`
+
+> 注意：`Freemail JWT_TOKEN / admin_token` 未配置时，自动注册/刷新会直接失败。
+
+### 自动同步上游并构建 GHCR 镜像
+
+- `.github/workflows/sync-upstream-build.yml`：每 3 小时自动从 `Dreamy-rain/gemini-business2api` 同步并合并到 `main`，合并成功后自动构建并推送 `ghcr.io/<owner>/<repo>`。
+- `.github/workflows/docker-build.yml`：在 `main` push/tag 或手动触发时构建并推送 GHCR 镜像。
 
 ### 更多文档
 

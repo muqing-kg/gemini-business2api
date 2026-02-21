@@ -194,14 +194,14 @@
                     v-model="localSettings.basic.freemail_base_url"
                     type="text"
                     class="w-full rounded-2xl border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="http://your-freemail-server.com"
+                    placeholder="http://127.0.0.1:8787"
                   />
-                  <label class="block text-xs text-muted-foreground">Freemail JWT Token</label>
+                  <label class="block text-xs text-muted-foreground">Freemail JWT_TOKEN / admin_token</label>
                   <input
                     v-model="localSettings.basic.freemail_jwt_token"
                     type="text"
                     class="w-full rounded-2xl border border-input bg-background px-3 py-2 text-sm"
-                    placeholder="eyJ..."
+                    placeholder="wrangler.toml 里的 JWT_TOKEN"
                   />
                   <label class="block text-xs text-muted-foreground">Freemail 域名（可选，留空随机）</label>
                   <input
@@ -457,7 +457,7 @@ watch(settings, (value) => {
   next.basic.moemail_domain = typeof next.basic.moemail_domain === 'string'
     ? next.basic.moemail_domain
     : ''
-  next.basic.freemail_base_url = next.basic.freemail_base_url || 'http://your-freemail-server.com'
+  next.basic.freemail_base_url = next.basic.freemail_base_url || 'http://127.0.0.1:8787'
   next.basic.freemail_jwt_token = typeof next.basic.freemail_jwt_token === 'string'
     ? next.basic.freemail_jwt_token
     : ''

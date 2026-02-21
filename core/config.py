@@ -55,8 +55,8 @@ class BasicConfig(BaseModel):
     moemail_base_url: str = Field(default="https://moemail.nanohajimi.mom", description="Moemail API地址")
     moemail_api_key: str = Field(default="", description="Moemail API key")
     moemail_domain: str = Field(default="", description="Moemail 邮箱域名（可选，留空则随机选择）")
-    freemail_base_url: str = Field(default="http://your-freemail-server.com", description="Freemail API地址")
-    freemail_jwt_token: str = Field(default="", description="Freemail JWT Token")
+    freemail_base_url: str = Field(default="http://127.0.0.1:8787", description="Freemail API地址（兼容 muqing-kg/freemail）")
+    freemail_jwt_token: str = Field(default="", description="Freemail JWT_TOKEN（admin_token）")
     freemail_verify_ssl: bool = Field(default=True, description="Freemail SSL校验")
     freemail_domain: str = Field(default="", description="Freemail 邮箱域名（可选，留空则随机选择）")
     mail_proxy_enabled: bool = Field(default=False, description="是否启用临时邮箱代理（使用账户操作代理）")
@@ -206,7 +206,7 @@ class ConfigManager:
             moemail_base_url=basic_data.get("moemail_base_url") or "https://moemail.nanohajimi.mom",
             moemail_api_key=str(basic_data.get("moemail_api_key") or "").strip(),
             moemail_domain=str(basic_data.get("moemail_domain") or "").strip(),
-            freemail_base_url=basic_data.get("freemail_base_url") or "http://your-freemail-server.com",
+            freemail_base_url=basic_data.get("freemail_base_url") or "http://127.0.0.1:8787",
             freemail_jwt_token=str(basic_data.get("freemail_jwt_token") or "").strip(),
             freemail_verify_ssl=_parse_bool(basic_data.get("freemail_verify_ssl"), True),
             freemail_domain=str(basic_data.get("freemail_domain") or "").strip(),

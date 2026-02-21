@@ -216,7 +216,7 @@ class LoginService(BaseTaskService[LoginTask]):
                 error_message = "邮箱密码缺失" if mail_provider == "duckmail" else "mail password (email_id) missing"
                 return {"success": False, "email": account_id, "error": error_message}
             if mail_provider == "freemail" and not account.get("mail_jwt_token") and not config.basic.freemail_jwt_token:
-                return {"success": False, "email": account_id, "error": "Freemail JWT Token 未配置"}
+                return {"success": False, "email": account_id, "error": "Freemail JWT_TOKEN(admin_token) 未配置"}
 
             # 创建邮件客户端，优先使用账户级别配置
             mail_address = account.get("mail_address") or account_id
@@ -332,7 +332,7 @@ class LoginService(BaseTaskService[LoginTask]):
                 if not mail_password:
                     continue
             elif mail_provider == "freemail":
-                if not config.basic.freemail_jwt_token:
+                if not account.get("mail_jwt_token") and not config.basic.freemail_jwt_token:
                     continue
             elif mail_provider == "gptmail":
                 # GPTMail 不需要密码，允许直接刷新

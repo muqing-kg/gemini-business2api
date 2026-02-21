@@ -1,24 +1,46 @@
 services:
   gemini-api:
-    image: cooooookk/gemini-business2api:latest
+    image: ${GEMINI_IMAGE:-ghcr.io/muqing-kg/gemini-business2api:latest}
     container_name: gemini-business2api
-    ports:
-      - "7860:7860"
-    volumes:
-      - ./data:/app/data
     env_file:
       - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      PORT: ${PORT:-7860}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://gemini:gemini_change_me@postgres:5432/gemini_business2api?sslmode=disable}
+    ports:
+      - "${HOST_PORT:-7860}:7860"
+    volumes:
+      - ./data:/app/data
     restart: unless-stopped
-    # 健康检查
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7860/admin/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
-    # 日志限制
+      retries: 5
+      start_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: gemini-business2api-postgres
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      POSTGRES_USER: ${POSTGRES_USER:-gemini}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gemini_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-gemini_business2api}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gemini} -d ${POSTGRES_DB:-gemini_business2api}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

@@ -182,8 +182,8 @@ class RegisterService(BaseTaskService[RegisterTask]):
         log_cb("info", f"📧 步骤 1/3: 注册临时邮箱 (提供商={temp_mail_provider})...")
 
         if temp_mail_provider == "freemail" and not config.basic.freemail_jwt_token:
-            log_cb("error", "❌ Freemail JWT Token 未配置")
-            return {"success": False, "error": "Freemail JWT Token 未配置"}
+            log_cb("error", "❌ Freemail JWT_TOKEN(admin_token) 未配置")
+            return {"success": False, "error": "Freemail JWT_TOKEN(admin_token) 未配置"}
 
         client = create_temp_mail_client(
             temp_mail_provider,

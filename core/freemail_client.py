@@ -14,7 +14,7 @@ class FreemailClient:
 
     def __init__(
         self,
-        base_url: str = "http://your-freemail-server.com",
+        base_url: str = "http://127.0.0.1:8787",
         jwt_token: str = "",
         proxy: str = "",
         verify_ssl: bool = True,
@@ -36,7 +36,7 @@ class FreemailClient:
         """发送请求并打印日志"""
         self._log("info", f"📤 发送 {method} 请求: {url}")
         if "params" in kwargs:
-            self._log("info", f"🔎 参数: {kwargs['params']}")
+            self._log("info", f"🔎 参数: {self._sanitize_params(kwargs['params'])}")
 
         try:
             res = request_with_proxy_fallback(
@@ -59,26 +59,99 @@ class FreemailClient:
             self._log("error", f"❌ 网络请求失败: {e}")
             raise
 
+    def _sanitize_params(self, params: dict) -> dict:
+        """隐藏敏感参数，避免日志泄露 token"""
+        sanitized = dict(params or {})
+        if "admin_token" in sanitized and sanitized["admin_token"]:
+            sanitized["admin_token"] = "***"
+        return sanitized
+
+    def _build_auth_params(self) -> dict:
+        """构建 Query 鉴权参数（兼容 freemail 的 admin_token）"""
+        if not self.jwt_token:
+            return {}
+        return {"admin_token": self.jwt_token}
+
+    def _build_auth_headers(self) -> dict:
+        """构建 Header 鉴权参数（兼容 Bearer / X-Admin-Token）"""
+        if not self.jwt_token:
+            return {}
+        return {
+            "Authorization": f"Bearer {self.jwt_token}",
+            "X-Admin-Token": self.jwt_token,
+        }
+
+    def _get_available_domains(self) -> list[str]:
+        """获取可用域名列表"""
+        try:
+            res = self._request(
+                "GET",
+                f"{self.base_url}/api/domains",
+                params=self._build_auth_params(),
+                headers=self._build_auth_headers(),
+            )
+            if res.status_code != 200:
+                return []
+
+            domains = res.json() if res.content else []
+            if not isinstance(domains, list):
+                return []
+            return [str(item).strip() for item in domains if str(item).strip()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        return str(domain or "").strip().lstrip("@").lower()
+
+    def _resolve_domain_index(self, domain: str) -> Optional[int]:
+        """将域名转换为 freemail 的 domainIndex 参数"""
+        target = self._normalize_domain(domain)
+        if not target:
+            return None
+        domains = self._get_available_domains()
+        for index, item in enumerate(domains):
+            if self._normalize_domain(item) == target:
+                return index
+        return None
+
     def register_account(self, domain: Optional[str] = None) -> bool:
         """创建新的临时邮箱"""
         try:
-            params = {"admin_token": self.jwt_token}
+            params = self._build_auth_params()
+            headers = self._build_auth_headers()
             if domain:
+                # 兼容旧实现：保留 domain 字段
                 params["domain"] = domain
                 self._log("info", f"📧 使用域名: {domain}")
+                domain_index = self._resolve_domain_index(domain)
+                if domain_index is not None:
+                    params["domainIndex"] = str(domain_index)
+                    self._log("info", f"🧭 已映射 domainIndex={domain_index}")
+                else:
+                    self._log("warning", "⚠️ freemail 未找到匹配域名，将由服务端自动选择")
             else:
                 self._log("info", "🔍 自动选择域名...")
 
             res = self._request(
-                "POST",
+                "GET",
                 f"{self.base_url}/api/generate",
                 params=params,
+                headers=headers,
             )
+            if res.status_code in (404, 405):
+                self._log("warning", "⚠️ GET /api/generate 不可用，回退到 POST")
+                res = self._request(
+                    "POST",
+                    f"{self.base_url}/api/generate",
+                    params=params,
+                    headers=headers,
+                )
 
             if res.status_code in (200, 201):
                 data = res.json() if res.content else {}
-                # Freemail API 返回的字段是 "email" 或 "mailbox"
-                email = data.get("email") or data.get("mailbox")
+                # 兼容不同实现：email/mailbox/address
+                email = data.get("email") or data.get("mailbox") or data.get("address")
                 if email:
                     self.email = email
                     self._log("info", f"✅ Freemail 邮箱创建成功: {self.email}")
@@ -111,13 +184,14 @@ class FreemailClient:
             self._log("info", "📬 正在拉取 Freemail 邮件列表...")
             params = {
                 "mailbox": self.email,
-                "admin_token": self.jwt_token,
+                **self._build_auth_params(),
             }
 
             res = self._request(
                 "GET",
                 f"{self.base_url}/api/emails",
                 params=params,
+                headers=self._build_auth_headers(),
             )
 
             if res.status_code == 401 or res.status_code == 403:
@@ -238,7 +312,8 @@ class FreemailClient:
                     detail_res = self._request(
                         "GET",
                         f"{self.base_url}/api/email/{email_id}",
-                        params={"admin_token": self.jwt_token},
+                        params=self._build_auth_params(),
+                        headers=self._build_auth_headers(),
                     )
                     if detail_res.status_code == 200:
                         detail_data = detail_res.json()
@@ -302,16 +377,9 @@ class FreemailClient:
     def _get_domain(self) -> str:
         """获取可用域名"""
         try:
-            params = {"admin_token": self.jwt_token}
-            res = self._request(
-                "GET",
-                f"{self.base_url}/api/domains",
-                params=params,
-            )
-            if res.status_code == 200:
-                domains = res.json() if res.content else []
-                if isinstance(domains, list) and domains:
-                    return domains[0]
+            domains = self._get_available_domains()
+            if domains:
+                return domains[0]
         except Exception:
             pass
         return ""
